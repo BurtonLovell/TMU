@@ -1,0 +1,1018 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="initial-scale=1, maximum-scale=1, user-scalable=no">
+    <title>Kauai Adventure Navigator Plus</title>
+    <style>
+      /* Basic styling for full-page map and header */
+      html, body, #viewDiv {
+        padding: 0;
+        margin: 0;
+        height: 100%;
+        width: 100%;
+      }
+      /* Main map container covers entire viewport */
+      #viewDiv {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+      }
+      /* Fixed header styling */
+      h1 {
+        position: absolute;
+        top: 0;
+        width: 100%;
+        margin: 0;
+        text-align: center;
+        z-index: 1000;
+        background: rgba(255,255,255,0.8);
+        padding: 10px;
+      }
+      /* Push Esri UI widgets down to avoid header overlap (increased by 30px) */
+      .esri-ui-top-left,
+      .esri-ui-top-right {
+        margin-top: 150px;
+      }
+      /* Legend container (moved down 30px) */
+      #legendContainer {
+        position: absolute;
+        top: 210px; 
+        right: 20px;
+        z-index: 2000;
+        background: rgba(255,255,255,0.8);
+        padding: 8px;
+        border-radius: 4px;
+        max-width: 180px;
+        font-family: sans-serif;
+        font-size: 12px;
+      }
+      /* Filter container positioned at the top right, just below header (moved down 30px) */
+      #filterContainer {
+        position: absolute;
+        top: 90px;
+        right: 20px;
+        background: rgba(255,255,255,0.9);
+        padding: 10px;
+        border-radius: 4px;
+        z-index: 1000;
+      }
+      /* Styling for control buttons */
+      #mapboxRouteBtn, #clearBtn {
+        position: absolute;
+        font-size: 14px;
+        z-index: 1000;
+        padding: 8px;
+        background-color: #eee;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      #mapboxRouteBtn {
+        bottom: 120px;
+        left: 20px;
+      }
+      /* Align Clear Requests button vertically with Calculate Route */
+      #clearBtn {
+        bottom: 80px;
+        left: 20px;
+        background-color: #ffc107;
+        border: none;
+      }
+      /* Results box for displaying route information */
+      #resultsBox {
+        position: absolute;
+        bottom: 180px;
+        left: 20px;
+        z-index: 1000;
+        background: white;
+        border: 1px solid #ccc;
+        padding: 10px;
+        border-radius: 4px;
+        max-width: 300px;
+        display: none;
+        font-family: sans-serif;
+        font-size: 12px;
+      }
+      /* Bottom details panel for interactive storytelling */
+      #detailsPanel {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        background: rgba(255,255,255,0.95);
+        padding: 10px;
+        border-top: 1px solid #ccc;
+        font-size: 14px;
+        z-index: 1000;
+        font-family: sans-serif;
+      }
+    </style>
+    
+    <!-- Load ArcGIS API CSS and JS -->
+    <link rel="stylesheet" href="https://js.arcgis.com/4.31/esri/css/main.css">
+    <script src="https://js.arcgis.com/4.31/"></script>
+    <script>
+      // Mapbox token (replace with your valid token if needed)
+      const MAPBOX_TOKEN = "pk.eyJ1IjoiYnVydG9ubG92ZWxsIiwiYSI6ImNtOG5jbGtzazFvdDUya29lcGRmMDZwNDIifQ.DU3dZTQQ3AFNSg6Q1JA8tA";
+    </script>
+    
+    <script>
+      require([
+        "esri/Map",
+        "esri/views/MapView",
+        "esri/widgets/BasemapToggle",
+        "esri/widgets/ScaleBar",
+        "esri/widgets/Search",
+        "esri/widgets/Expand",
+        "esri/widgets/Bookmarks",
+        "esri/Viewpoint",
+        "esri/widgets/Home",
+        "esri/layers/GraphicsLayer",
+        "esri/Graphic",
+        "esri/symbols/SimpleMarkerSymbol",
+        "esri/geometry/Polyline",
+        "esri/symbols/SimpleLineSymbol",
+        "esri/geometry/geometryEngine"
+      ], function(
+        Map, MapView,
+        BasemapToggle, ScaleBar, Search, Expand,
+        Bookmarks, Viewpoint, Home,
+        GraphicsLayer, Graphic, SimpleMarkerSymbol,
+        Polyline, SimpleLineSymbol, geometryEngine
+      ) {
+        
+        /********** Map and View Initialization **********/
+        var map = new Map({ basemap: "hybrid" });
+        var view = new MapView({
+          container: "viewDiv",
+          map: map,
+          center: [-159.526, 22.096],
+          zoom: 11
+        });
+        
+        view.ui.add(new BasemapToggle({ view: view, nextBasemap: "streets" }), "bottom-right");
+        view.ui.add(new ScaleBar({ view: view }), { position: "bottom-left" });
+        view.ui.add(new Search({ view: view }), { position: "top-right", index: 0 });
+        view.ui.add(new Home({ view: view }), { position: "top-left" });
+        
+        /********** Bottom Details Panel for Storytelling **********/
+        var detailsPanel = document.getElementById("detailsPanel");
+        if (!detailsPanel) {
+          detailsPanel = document.createElement("div");
+          detailsPanel.id = "detailsPanel";
+          document.body.appendChild(detailsPanel);
+        }
+        detailsPanel.innerHTML = "";
+        
+        /********** Legend **********/
+        var legendContainer = document.createElement("div");
+        legendContainer.id = "legendContainer";
+        legendContainer.innerHTML = `
+          <h3 style="margin:0; font-size:14px;">Neat Places to Visit</h3>
+          <ul style="list-style: none; padding: 0; margin: 8px 0 0;">
+            <li style="margin-bottom:5px;">
+              <span style="display:inline-block; width:10px; height:10px; background:rgb(245,245,220); border-radius:50%; border:2px solid #000; margin-right:6px;"></span>
+              Beach
+            </li>
+            <li style="margin-bottom:5px;">
+              <span style="display:inline-block; width:10px; height:10px; background:rgb(34,139,34); border-radius:50%; border:2px solid #fff; margin-right:6px;"></span>
+              Park/Garden
+            </li>
+            <li style="margin-bottom:5px;">
+              <span style="display:inline-block; width:10px; height:10px; background:rgb(0,0,255); border-radius:50%; border:2px solid #fff; margin-right:6px;"></span>
+              Falls
+            </li>
+            <li style="margin-bottom:5px;">
+              <span style="display:inline-block; width:25px; height:0; border-top:2px dashed rgb(210,180,140); margin-right:6px;"></span>
+              Trails
+            </li>
+            <li>
+              <span style="display:inline-block; width:10px; height:10px; background:purple; border-radius:50%; border:2px solid #fff; margin-right:6px;"></span>
+              Other
+            </li>
+          </ul>
+        `;
+        document.body.appendChild(legendContainer);
+        
+        /********** Filter Container (Top Right) **********/
+        var filterContainer = document.createElement("div");
+        filterContainer.id = "filterContainer";
+        filterContainer.innerHTML = `
+          <input type="text" id="filterInput" placeholder="Search attractions..." style="width: 200px; padding: 5px;">
+          <button id="filterBtn" style="padding: 5px;">Apply Filter</button>
+          <button id="clearFilterBtn" style="padding: 5px;">Clear Filter</button>
+        `;
+        document.body.appendChild(filterContainer);
+        
+        /********** Bookmarks and Expand Widgets for Attractions **********/
+        var attractionsContainer = document.createElement("div");
+        attractionsContainer.style.padding = "10px";
+        attractionsContainer.style.backgroundColor = "rgba(255,255,255,0.8)";
+        attractionsContainer.style.borderRadius = "4px";
+        attractionsContainer.style.maxWidth = "300px";
+        var attractionsHeader = document.createElement("h2");
+        attractionsHeader.textContent = "Attractions";
+        attractionsHeader.style.margin = "0 0 10px 0";
+        attractionsHeader.style.fontSize = "16px";
+        attractionsContainer.appendChild(attractionsHeader);
+        var bookmarksDiv = document.createElement("div");
+        attractionsContainer.appendChild(bookmarksDiv);
+        var bookmarksWidget = new Bookmarks({
+          view: view,
+          container: bookmarksDiv,
+          bookmarks: [
+            { 
+              name: "Waimea Canyon", 
+              description: "A breathtaking canyon with stunning sunrise views. Bring water and sun protection.",
+              image: "https://picsum.photos/seed/waimea/400/300",
+              funFacts: "Often called the 'Grand Canyon of the Pacific' due to its dramatic colors.",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.6690702, latitude: 21.9929142 }, scale: 25000 })
+            },
+            { 
+              name: "Napali Coast", 
+              description: "A dramatic coastline offering incredible vistas. Check the weather before you go.",
+              image: "https://picsum.photos/seed/napali/400/300",
+              funFacts: "Renowned for its towering sea cliffs and hidden beaches.",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.6416667, latitude: 22.1833333 }, scale: 25000 })
+            },
+            { 
+              name: "Hanalei Bay", 
+              description: "A picturesque bay with an expansive sandy beach and excellent surf.",
+              image: "https://via.placeholder.com/400x300?text=Hanalei+Bay",
+              funFacts: "Popular for both relaxation and water sports.",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.492, latitude: 22.20867 }, scale: 25000 })
+            },
+            { 
+              name: "Wailua Falls", 
+              description: "A stunning waterfall set amidst lush tropical foliage.",
+              image: "https://via.placeholder.com/400x300?text=Wailua+Falls",
+              funFacts: "One of the most photographed waterfalls on the island.",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.366, latitude: 22.074 }, scale: 25000 })
+            },
+            { 
+              name: "Poipu Beach", 
+              description: "A popular beach with golden sands and calm, clear waters ideal for swimming.",
+              image: "https://via.placeholder.com/400x300?text=Poipu+Beach",
+              funFacts: "Famous for its family-friendly atmosphere.",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.4525, latitude: 21.87066 }, scale: 25000 })
+            },
+            { 
+              name: "Koke'e State Park", 
+              description: "A scenic park with dramatic forest landscapes and numerous hiking trails.",
+              image: "https://via.placeholder.com/400x300?text=Koke'e+State+Park",
+              funFacts: "Official Address: Koke'e State Park, Waimea, HI 96797",
+              address: "Koke'e State Park, Waimea, HI 96797",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.6589, latitude: 22.1303 }, scale: 25000 })
+            },
+            { 
+              name: "Spouting Horn", 
+              description: "A natural blowhole that spouts water during high tide.",
+              image: "https://via.placeholder.com/400x300?text=Spouting+Horn",
+              funFacts: "A fascinating natural phenomenon.",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.493581, latitude: 21.885018 }, scale: 25000 })
+            },
+            { 
+              name: "Kalalau Lookout", 
+              description: "A scenic overlook with panoramic views of the rugged coastline.",
+              image: "https://via.placeholder.com/400x300?text=Kalalau+Lookout",
+              funFacts: "Offers some of the most breathtaking vistas on Kauai.",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.645959, latitude: 22.151130 }, scale: 25000 })
+            },
+            { 
+              name: "Kilauea Lighthouse", 
+              description: "A historic lighthouse with beautiful ocean views and excellent birdwatching.",
+              image: "https://via.placeholder.com/400x300?text=Kilauea+Lighthouse",
+              funFacts: "Official Address: Kilauea Lighthouse, Kauai, HI 96754",
+              address: "Kilauea Lighthouse, Kauai, HI 96754",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.40201, latitude: 22.23171 }, scale: 25000 })
+            },
+            { 
+              name: "Limahuli Garden", 
+              description: "A lush botanical garden showcasing native Hawaiian flora and cultural history.",
+              image: "https://via.placeholder.com/400x300?text=Limahuli+Garden",
+              funFacts: "Official Address: Limahuli Garden, Princeville, HI 96722",
+              address: "Limahuli Garden, Princeville, HI 96722",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.576281, latitude: 22.219293 }, scale: 25000 })
+            }
+          ]
+        });
+        var attractionsExpand = new Expand({
+          view: view,
+          content: attractionsContainer,
+          expanded: false,
+          expandTooltip: "Attractions"
+        });
+        view.ui.add(attractionsExpand, { position: "top-left" });
+        
+        /********** Other Attractions Expand Widget **********/
+        var otherAttractionsContainer = document.createElement("div");
+        otherAttractionsContainer.style.padding = "10px";
+        otherAttractionsContainer.style.backgroundColor = "rgba(255,255,255,0.8)";
+        otherAttractionsContainer.style.borderRadius = "4px";
+        otherAttractionsContainer.style.maxWidth = "300px";
+        var otherAttractionsHeader = document.createElement("h2");
+        otherAttractionsHeader.textContent = "Other Attractions";
+        otherAttractionsHeader.style.margin = "0 0 10px 0";
+        otherAttractionsHeader.style.fontSize = "16px";
+        otherAttractionsContainer.appendChild(otherAttractionsHeader);
+        var otherBookmarksDiv = document.createElement("div");
+        otherAttractionsContainer.appendChild(otherBookmarksDiv);
+        var otherAttractionsWidget = new Bookmarks({
+          view: view,
+          container: otherBookmarksDiv,
+          bookmarks: [
+            { 
+              name: "Opaeka'a Falls", 
+              description: "A picturesque waterfall located in central Kauai.",
+              image: "https://via.placeholder.com/400x300?text=Opaeka'a+Falls",
+              funFacts: "A natural marvel with powerful cascades.",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.364167, latitude: 22.052222 }, scale: 25000 })
+            },
+            { 
+              name: "Na ʻĀina Kai Botanical Gardens", 
+              description: "A tranquil botanical garden featuring a diverse collection of tropical plants.",
+              image: "https://via.placeholder.com/400x300?text=Na+ʻĀina+Kai+Botanical+Gardens",
+              funFacts: "Official Address: Na ʻĀina Kai Botanical Gardens, Eleele, HI 96701",
+              address: "Na ʻĀina Kai Botanical Gardens, Eleele, HI 96701",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.3816, latitude: 22.2112 }, scale: 25000 })
+            },
+            { 
+              name: "Allerton National Botanical Garden", 
+              description: "A nationally recognized garden blending art and nature.",
+              image: "https://via.placeholder.com/400x300?text=Allerton+Botanical+Garden",
+              funFacts: "Official Address: Allerton Garden, Poipu, HI 96756",
+              address: "Allerton Garden, Poipu, HI 96756",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.4925, latitude: 21.8857 }, scale: 25000 })
+            },
+            { 
+              name: "Kēʻē Beach", 
+              description: "A quiet, secluded beach with a mix of sand and lava rock.",
+              image: "https://via.placeholder.com/400x300?text=Kēʻē+Beach",
+              funFacts: "A hidden gem ideal for relaxation.",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.582938, latitude: 22.221494 }, scale: 25000 })
+            },
+            { 
+              name: "Pila'a Beach", 
+              description: "A long, scenic beach famous for its stunning sunsets.",
+              image: "https://via.placeholder.com/400x300?text=Pila'a+Beach",
+              funFacts: "A favorite for families and surfers alike.",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.363082886, latitude: 22.2116508484 }, scale: 25000 })
+            },
+            { 
+              name: "Larsen's Beach", 
+              description: "A picturesque beach with soft sands and crystal-clear waters.",
+              image: "https://via.placeholder.com/400x300?text=Larsen's+Beach",
+              funFacts: "Perfect for sunbathing and a peaceful day at the beach.",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.338805, latitude: 22.206051 }, scale: 25000 })
+            },
+            { 
+              name: "Barking Sands", 
+              description: "A unique beach with volcanic sands that produce an unusual sound.",
+              image: "https://via.placeholder.com/400x300?text=Barking+Sands",
+              funFacts: "A must-see for an unusual beach experience.",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.77283, latitude: 22.054833 }, scale: 25000 })
+            },
+            { 
+              name: "Hideaway Beach", 
+              description: "A hidden gem accessible via a challenging trail.",
+              image: "https://via.placeholder.com/400x300?text=Hideaway+Beach",
+              funFacts: "Ideal for those seeking solitude and adventure.",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.4955, latitude: 22.2234 }, scale: 25000 })
+            },
+            { 
+              name: "Polihale State Park", 
+              description: "A remote, expansive beach known for its wild beauty and dramatic sunsets.",
+              image: "https://via.placeholder.com/400x300?text=Polihale+State+Park",
+              funFacts: "Official Address: Polihale State Park, Kalaheo, HI 96741",
+              address: "Polihale State Park, Kalaheo, HI 96741",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.761642, latitude: 22.079357 }, scale: 25000 })
+            },
+            { 
+              name: "Makua (Tunnels) Beach", 
+              description: "A secluded beach featuring natural rock tunnels.",
+              image: "https://via.placeholder.com/400x300?text=Makua+Beach",
+              funFacts: "A fascinating coastal formation perfect for exploration.",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.56055100000003, latitude: 22.224036 }, scale: 25000 })
+            }
+          ]
+        });
+        var otherAttractionsExpand = new Expand({
+          view: view,
+          content: otherAttractionsContainer,
+          expanded: false,
+          expandTooltip: "Other Attractions"
+        });
+        view.ui.add(otherAttractionsExpand, { position: "top-left", index: 4 });
+        
+        /********** Trails Expand Widget (with Hiking Polylines) **********/
+        var trailsContainer = document.createElement("div");
+        trailsContainer.style.padding = "10px";
+        trailsContainer.style.backgroundColor = "rgba(255,255,255,0.8)";
+        trailsContainer.style.borderRadius = "4px";
+        trailsContainer.style.maxWidth = "300px";
+        var trailsHeader = document.createElement("h2");
+        trailsHeader.textContent = "Trails";
+        trailsHeader.style.margin = "0 0 10px 0";
+        trailsHeader.style.fontSize = "16px";
+        trailsContainer.appendChild(trailsHeader);
+        var trailsBookmarksDiv = document.createElement("div");
+        trailsContainer.appendChild(trailsBookmarksDiv);
+        var trailsBookmarks = new Bookmarks({
+          view: view,
+          container: trailsBookmarksDiv,
+          bookmarks: [
+            { 
+              name: "Kalalau Trail",
+              description: "A challenging 17.7 km hike through rugged terrain.",
+              distance: "17.7 km",
+              parking: "Limited parking at Ke'e",
+              permitCost: "Yes (Napali Coast)",
+              difficulty: "Strenuous",
+              funFacts: "Offers breathtaking scenery and dramatic coastal views.",
+              image: "https://via.placeholder.com/400x300?text=Kalalau+Trail",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.596, latitude: 22.210 }, scale: 24000 })
+            },
+            { 
+              name: "Awa'awapuhi",
+              description: "A 10 km trail with expansive valley views.",
+              distance: "10 km",
+              parking: "Free at trailhead",
+              permitCost: "No permit",
+              difficulty: "Moderate",
+              funFacts: "Passes through lush landscapes with breathtaking vistas.",
+              image: "https://via.placeholder.com/400x300?text=Awa'awapuhi+Trail",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.645, latitude: 22.142 }, scale: 24000 })
+            },
+            { 
+              name: "Nu'alolo",
+              description: "A 12 km trail with rugged terrain and diverse ecosystems.",
+              distance: "12 km",
+              parking: "Parking near Koke’e HQ",
+              permitCost: "No permit",
+              difficulty: "Challenging",
+              funFacts: "Features wild, unspoiled natural beauty.",
+              image: "https://via.placeholder.com/400x300?text=Nu'alolo+Trail",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.621, latitude: 22.132 }, scale: 24000 })
+            },
+            { 
+              name: "Sleeping Giant",
+              description: "A 5.1 km trail with views reminiscent of a sleeping giant.",
+              distance: "5.1 km",
+              parking: "Roadside pull-off",
+              permitCost: "No permit",
+              difficulty: "Easy",
+              funFacts: "Its silhouette gives the impression of a giant at rest.",
+              image: "https://via.placeholder.com/400x300?text=Sleeping+Giant",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.377, latitude: 22.068 }, scale: 24000 })
+            },
+            { 
+              name: "Waipo'o Falls Trail",
+              description: "A 6.4 km trail that descends to a picturesque waterfall.",
+              distance: "6.4 km",
+              parking: "Koke’e area lots",
+              permitCost: "No permit",
+              difficulty: "Moderate",
+              funFacts: "Leads to a beautiful waterfall set in lush surroundings.",
+              image: "https://via.placeholder.com/400x300?text=Waipo'o+Falls+Trail",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.663, latitude: 22.099 }, scale: 24000 })
+            },
+            { 
+              name: "Hanakapiai Trail",
+              description: "A 6.4 km hike (to the beach) with dramatic coastal views.",
+              distance: "6.4 km",
+              parking: "Small lot at Ke'e",
+              permitCost: "Yes (Napali Coast)",
+              difficulty: "Moderate-Strenuous",
+              funFacts: "Offers a unique blend of coastal and jungle scenery.",
+              image: "https://via.placeholder.com/400x300?text=Hanakapiai+Trail",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.582, latitude: 22.222 }, scale: 24000 })
+            },
+            { 
+              name: "Alakai Swamp Trail",
+              description: "An 11.2 km hike through a rare high-elevation swamp.",
+              distance: "11.2 km",
+              parking: "Koke’e State Park area",
+              permitCost: "No permit",
+              difficulty: "Wet, moderate",
+              funFacts: "Explore a unique ecosystem unlike any other in Hawaii.",
+              image: "https://via.placeholder.com/400x300?text=Alakai+Swamp+Trail",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.635, latitude: 22.132 }, scale: 24000 })
+            },
+            { 
+              name: "Pihea Trail",
+              description: "A gentle 6 km forest trail offering quiet natural beauty.",
+              distance: "6 km",
+              parking: "Koke’e area end lot",
+              permitCost: "No permit",
+              difficulty: "Moderate",
+              funFacts: "Ideal for a relaxed hike through verdant surroundings.",
+              image: "https://via.placeholder.com/400x300?text=Pihea+Trail",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.631, latitude: 22.146 }, scale: 24000 })
+            },
+            { 
+              name: "Kuilau Ridge Trail",
+              description: "A 3.2 km hike with panoramic vistas of Kauai’s mountains.",
+              distance: "3.2 km",
+              parking: "Wailua Forest parking",
+              permitCost: "No permit",
+              difficulty: "Easy",
+              funFacts: "An ideal trail for families and beginners.",
+              image: "https://via.placeholder.com/400x300?text=Kuilau+Ridge+Trail",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.443, latitude: 22.058 }, scale: 24000 })
+            },
+            { 
+              name: "Ho'opi'i Falls Trail",
+              description: "A short 3.2 km trail leading to a series of charming waterfalls.",
+              distance: "3.2 km",
+              parking: "Roadside at Kapahi",
+              permitCost: "No permit",
+              difficulty: "Easy-Moderate",
+              funFacts: "A delightful walk in a tropical setting with multiple small falls.",
+              image: "https://via.placeholder.com/400x300?text=Ho'opi'i+Falls+Trail",
+              viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.376, latitude: 22.102 }, scale: 24000 })
+            }
+          ]
+        });
+        var trailsExpand = new Expand({
+          view: view,
+          content: trailsContainer,
+          expanded: false,
+          expandTooltip: "Trails"
+        });
+        view.ui.add(trailsExpand, { position: "top-left", index: 5 });
+        
+        /********** Symbol Layer for Markers **********/
+        var symbolLayer = new GraphicsLayer();
+        map.add(symbolLayer);
+        function getMarkerSize(name) {
+          return name.toLowerCase().includes("beach") ? "12px" : "10px";
+        }
+        function getSymbolColor(name) {
+          var lower = name.toLowerCase();
+          if (lower.includes("beach")) return [245,245,220,1];
+          if (lower.includes("garden") || lower.includes("park")) return [34,139,34,1];
+          if (lower.includes("falls")) return [0,0,255,1];
+          return [128,0,128,1];
+        }
+        function getOutlineColor(name) {
+          return name.toLowerCase().includes("beach") ? [0,0,0,1] : [255,255,255,1];
+        }
+        function addSymbolsForBookmarks(bookmarkWidget) {
+          bookmarkWidget.bookmarks.forEach(function(bookmark) {
+            var coord = bookmark.viewpoint.targetGeometry;
+            if (coord.type === "point") {
+              var circleSymbol = {
+                type: "simple-marker",
+                style: "circle",
+                color: getSymbolColor(bookmark.name),
+                size: getMarkerSize(bookmark.name),
+                outline: { color: getOutlineColor(bookmark.name), width: 2 }
+              };
+              var attributes = Object.assign({
+                name: bookmark.name,
+                description: bookmark.description || "",
+                image: bookmark.image || "https://via.placeholder.com/400x300?text=No+Image",
+                funFacts: bookmark.funFacts || "No fun fact available."
+              }, bookmark);
+              var graphic = new Graphic({
+                geometry: coord,
+                symbol: circleSymbol,
+                attributes: attributes
+              });
+              graphic.popupTemplate = {
+                title: "{name}",
+                content: function(graphic) {
+                  var pt = graphic.geometry;
+                  var primaryInfo = "";
+                  if(graphic.attributes.address){
+                    primaryInfo = "<p><strong>Address:</strong> " + graphic.attributes.address + "</p>";
+                  } else {
+                    var lon = pt.longitude || pt.x;
+                    var lat = pt.latitude || pt.y;
+                    primaryInfo = "<p><strong>Coordinates:</strong> " + lon.toFixed(3) + ", " + lat.toFixed(3) + "</p>";
+                  }
+                  var secondaryInfo = "<p><strong>How to get to location:</strong> " + (graphic.attributes.address ? graphic.attributes.address : ("Coordinates: " + (pt.longitude || pt.x).toFixed(3) + ", " + (pt.latitude || pt.y).toFixed(3))) + "</p>";
+                  return primaryInfo + secondaryInfo;
+                }
+              };
+              symbolLayer.add(graphic);
+            }
+          });
+        }
+        addSymbolsForBookmarks(bookmarksWidget);
+        addSymbolsForBookmarks(otherAttractionsWidget);
+        addSymbolsForBookmarks(trailsBookmarks);
+        
+        /********** Hiking Polylines **********/
+        var trailsLayer = new GraphicsLayer();
+        map.add(trailsLayer);
+        var trailLineSymbol = {
+          type: "simple-line",
+          color: [210,180,140,1],
+          width: 2,
+          style: "dash"
+        };
+        var hikingTrails = [
+          {
+            name: "Kalalau Trail",
+            description: "A challenging 17.7 km hike through rugged terrain.",
+            distance: "17.7 km",
+            parking: "Limited parking at Ke'e",
+            permitCost: "Yes (Napali Coast)",
+            difficulty: "Strenuous",
+            funFacts: "Offers breathtaking scenery and dramatic coastal views.",
+            image: "https://via.placeholder.com/400x300?text=Kalalau+Trail",
+            paths: [
+              [-159.659451, 22.171678],
+              [-159.653228, 22.176884],
+              [-159.644108, 22.179010],
+              [-159.641512, 22.178394],
+              [-159.632993, 22.189998],
+              [-159.628251, 22.193276],
+              [-159.620569, 22.191230],
+              [-159.620398, 22.195422],
+              [-159.616235, 22.198621],
+              [-159.613982, 22.196555],
+              [-159.612287, 22.197667],
+              [-159.613295, 22.200270],
+              [-159.610387, 22.201601],
+              [-159.608370, 22.199793],
+              [-159.595775, 22.211305],
+              [-159.586661, 22.217906],
+              [-159.582778, 22.220349]
+            ]
+          },
+          {
+            name: "Awa'awapuhi Trail",
+            description: "A 10 km trail with expansive valley views.",
+            distance: "10 km",
+            parking: "Free at trailhead",
+            permitCost: "No permit",
+            difficulty: "Moderate",
+            funFacts: "Passes through lush landscapes with breathtaking vistas.",
+            image: "https://via.placeholder.com/400x300?text=Awa'awapuhi+Trail",
+            paths: [
+              [-159.650,22.145],
+              [-159.647,22.144],
+              [-159.645,22.143],
+              [-159.643,22.142],
+              [-159.640,22.140]
+            ]
+          },
+          {
+            name: "Nu'alolo Trail",
+            description: "A 12 km trail with rugged terrain and diverse ecosystems.",
+            distance: "12 km",
+            parking: "Parking near Koke’e HQ",
+            permitCost: "No permit",
+            difficulty: "Challenging",
+            funFacts: "Features wild, unspoiled natural beauty.",
+            image: "https://via.placeholder.com/400x300?text=Nu'alolo+Trail",
+            paths: [
+              [-159.628,22.137],
+              [-159.625,22.136],
+              [-159.620,22.132],
+              [-159.617,22.130],
+              [-159.613,22.128]
+            ]
+          },
+          {
+            name: "Sleeping Giant (Nounou)",
+            description: "A 5.1 km trail with views reminiscent of a sleeping giant.",
+            distance: "5.1 km",
+            parking: "Roadside pull-off",
+            permitCost: "No permit",
+            difficulty: "Easy",
+            funFacts: "Its silhouette gives the impression of a giant at rest.",
+            image: "https://via.placeholder.com/400x300?text=Sleeping+Giant",
+            paths: [
+              [-159.379,22.065],
+              [-159.377,22.067],
+              [-159.375,22.070]
+            ]
+          },
+          {
+            name: "Waipo'o Falls Trail",
+            description: "A 6.4 km trail that descends to a picturesque waterfall.",
+            distance: "6.4 km",
+            parking: "Koke’e area lots",
+            permitCost: "No permit",
+            difficulty: "Moderate",
+            funFacts: "Leads to a beautiful waterfall set in lush surroundings.",
+            image: "https://via.placeholder.com/400x300?text=Waipo'o+Falls+Trail",
+            paths: [
+              [-159.663,22.099],
+              [-159.661,22.101],
+              [-159.659,22.105]
+            ]
+          },
+          {
+            name: "Hanakapiai Trail",
+            description: "A 6.4 km hike (to the beach) with dramatic coastal views.",
+            distance: "6.4 km",
+            parking: "Small lot at Ke'e",
+            permitCost: "Yes (Napali Coast)",
+            difficulty: "Moderate-Strenuous",
+            funFacts: "Offers a unique blend of coastal and jungle scenery.",
+            image: "https://via.placeholder.com/400x300?text=Hanakapiai+Trail",
+            paths: [
+              [-159.582,22.222],
+              [-159.580,22.220],
+              [-159.578,22.218]
+            ]
+          },
+          {
+            name: "Alakai Swamp Trail",
+            description: "An 11.2 km hike through a rare high-elevation swamp.",
+            distance: "11.2 km",
+            parking: "Koke’e State Park area",
+            permitCost: "No permit",
+            difficulty: "Wet, moderate",
+            funFacts: "Explore a unique ecosystem unlike any other in Hawaii.",
+            image: "https://via.placeholder.com/400x300?text=Alakai+Swamp+Trail",
+            paths: [
+              [-159.635,22.132],
+              [-159.632,22.131],
+              [-159.629,22.130]
+            ]
+          },
+          {
+            name: "Pihea Trail",
+            description: "A gentle 6 km forest trail offering quiet natural beauty.",
+            distance: "6 km",
+            parking: "Koke’e area end lot",
+            permitCost: "No permit",
+            difficulty: "Moderate",
+            funFacts: "Ideal for a relaxed hike through verdant surroundings.",
+            image: "https://via.placeholder.com/400x300?text=Pihea+Trail",
+            paths: [
+              [-159.631,22.146],
+              [-159.629,22.146],
+              [-159.625,22.147]
+            ]
+          },
+          {
+            name: "Kuilau Ridge Trail",
+            description: "A 3.2 km hike with panoramic vistas of Kauai’s mountains.",
+            distance: "3.2 km",
+            parking: "Wailua Forest parking",
+            permitCost: "No permit",
+            difficulty: "Easy",
+            funFacts: "An ideal trail for families and beginners.",
+            image: "https://via.placeholder.com/400x300?text=Kuilau+Ridge+Trail",
+            viewpoint: new Viewpoint({ targetGeometry: { type: "point", longitude: -159.443, latitude: 22.058 }, scale: 24000 }),
+            paths: [
+              [-159.445,22.055],
+              [-159.443,22.057],
+              [-159.442,22.060]
+            ]
+          },
+          {
+            name: "Ho'opi'i Falls Trail",
+            description: "A short 3.2 km trail leading to a series of charming waterfalls.",
+            distance: "3.2 km",
+            parking: "Roadside at Kapahi",
+            permitCost: "No permit",
+            difficulty: "Easy-Moderate",
+            funFacts: "A delightful walk in a tropical setting with multiple small falls.",
+            image: "https://via.placeholder.com/400x300?text=Ho'opi'i+Falls+Trail",
+            paths: [
+              [-159.378,22.103],
+              [-159.376,22.102],
+              [-159.374,22.101]
+            ]
+          }
+        ];
+        hikingTrails.forEach(function(trail) {
+          trail.funFacts = trail.funFacts || "Enjoy hiking " + trail.name + ".";
+          trail.image = trail.image || "https://via.placeholder.com/400x300";
+          var trailGraphic = new Graphic({
+            geometry: {
+              type: "polyline",
+              paths: [trail.paths],
+              spatialReference: { wkid: 4326 }
+            },
+            symbol: trailLineSymbol,
+            attributes: {
+              name: trail.name,
+              distance: trail.distance,
+              parking: trail.parking,
+              permitCost: trail.permitCost,
+              difficulty: trail.difficulty,
+              description: trail.description,
+              funFacts: trail.funFacts,
+              image: trail.image
+            },
+            popupTemplate: {
+              title: "{name}",
+              content: `
+                <p><strong>Distance:</strong> {distance}</p>
+                <p><strong>Parking:</strong> {parking}</p>
+                <p><strong>Permit Cost:</strong> {permitCost}</p>
+                <p><strong>Difficulty:</strong> {difficulty}</p>
+              `
+            }
+          });
+          trailsLayer.add(trailGraphic);
+        });
+        
+        /********** Mapbox Route Tool (Multi-Profile Routing) **********/
+        var routingMode = false;
+        var routeFirstPoint = null;
+        var routeLayer = new GraphicsLayer();
+        map.add(routeLayer);
+        var mapboxRouteBtn = document.createElement("button");
+        mapboxRouteBtn.id = "mapboxRouteBtn";
+        mapboxRouteBtn.innerHTML = "Calculate Route (Mapbox)";
+        document.body.appendChild(mapboxRouteBtn);
+        var resultsBox = document.createElement("div");
+        resultsBox.id = "resultsBox";
+        resultsBox.style.display = "none";
+        document.body.appendChild(resultsBox);
+        
+        mapboxRouteBtn.addEventListener("click", function() {
+          routingMode = true;
+          routeFirstPoint = null;
+          resultsBox.style.display = "none";
+          alert("Calculate Route: Click two points on the map to calculate a route.\nClick ok to continue, click clear to start again");
+          console.log("Routing mode activated.");
+        });
+        
+        view.on("click", function(event) {
+          if (routingMode) {
+            if (!routeFirstPoint) {
+              routeFirstPoint = event.mapPoint;
+              var firstRouteMarker = new Graphic({
+                geometry: routeFirstPoint,
+                symbol: { type: "simple-marker", style: "diamond", color: "blue", size: "10px" }
+              });
+              routeLayer.add(firstRouteMarker);
+              console.log("Route: First point set.");
+            } else {
+              var routeSecondPoint = event.mapPoint;
+              var secondRouteMarker = new Graphic({
+                geometry: routeSecondPoint,
+                symbol: { type: "simple-marker", style: "diamond", color: "blue", size: "10px" }
+              });
+              routeLayer.add(secondRouteMarker);
+              var coords = [
+                routeFirstPoint.longitude + "," + routeFirstPoint.latitude,
+                routeSecondPoint.longitude + "," + routeSecondPoint.latitude
+              ];
+              var profiles = ["driving", "walking", "cycling"];
+              var fetches = profiles.map(function(profile) {
+                var url = "https://api.mapbox.com/directions/v5/mapbox/" + profile + "/" + coords.join(";") +
+                          "?geometries=geojson&access_token=" + MAPBOX_TOKEN;
+                console.log("Mapbox API URL (" + profile + "):", url);
+                return fetch(url).then(function(response) { return response.json(); });
+              });
+              Promise.all(fetches).then(function(results) {
+                var outputHtml = "<h3>Route Results</h3>";
+                var profileNames = { driving: "Driving", walking: "Walking", cycling: "Biking" };
+                results.forEach(function(result, idx) {
+                  if (result.routes && result.routes.length > 0) {
+                    var route = result.routes[0];
+                    var distanceKm = route.distance / 1000;
+                    var durationMin = route.duration / 60;
+                    if ((profiles[idx] === "walking" || profiles[idx] === "cycling") && durationMin > 120) {
+                      var durationHr = durationMin / 60;
+                      outputHtml += "<p>" + profileNames[profiles[idx]] + ": " + distanceKm.toFixed(2) + " km, " + durationHr.toFixed(1) + " hr</p>";
+                    } else {
+                      outputHtml += "<p>" + profileNames[profiles[idx]] + ": " + distanceKm.toFixed(2) + " km, " + durationMin.toFixed(1) + " min</p>";
+                    }
+                  } else {
+                    outputHtml += "<p>" + profileNames[profiles[idx]] + ": No route found.</p>";
+                  }
+                });
+                resultsBox.innerHTML = outputHtml;
+                resultsBox.style.display = "block";
+                if (results[0].routes && results[0].routes.length > 0) {
+                  var routeGeoJSON = results[0].routes[0].geometry;
+                  var routeGraphic = new Graphic({
+                    geometry: {
+                      type: "polyline",
+                      paths: [routeGeoJSON.coordinates],
+                      spatialReference: { wkid: 4326 }
+                    },
+                    symbol: { type: "simple-line", color: [0, 255, 0, 0.8], width: 4, style: "solid" }
+                  });
+                  routeLayer.add(routeGraphic);
+                }
+                setTimeout(function(){ resultsBox.style.display = "none"; }, 5000);
+                routingMode = false;
+                routeFirstPoint = null;
+                console.log("Route: Route results displayed.");
+              }).catch(function(error) {
+                console.error("Error fetching route:", error);
+                resultsBox.innerHTML = "Error fetching route.";
+                resultsBox.style.display = "block";
+                setTimeout(function(){ resultsBox.style.display = "none"; }, 5000);
+                routingMode = false;
+                routeFirstPoint = null;
+              });
+            }
+            return;
+          }
+          // When not in routing mode, run interactive storytelling.
+          view.hitTest(event).then(function(response) {
+            var result = response.results.find(function(res) {
+              return res.graphic.layer === symbolLayer && res.graphic.attributes.description;
+            });
+            if (!result) {
+              result = response.results.find(function(res) {
+                return res.graphic.layer === trailsLayer && res.graphic.attributes.description;
+              });
+            }
+            if (result) {
+              showDetails(result.graphic);
+            }
+          });
+        });
+        
+        // Reusable function to show details in the storytelling panel
+        function showDetails(graphic) {
+          var attrs = graphic.attributes;
+          var geom = graphic.geometry;
+          var coordInfo = geom.type === "point" 
+            ? "Coordinates: " + geom.longitude.toFixed(3) + ", " + geom.latitude.toFixed(3)
+            : "Trail coordinates available along route";
+          var locationInfo = attrs.address || coordInfo;
+          detailsPanel.innerHTML = "<strong>" + attrs.name + "</strong><br>" + attrs.description + "<br><strong>How to get to location:</strong> " + locationInfo;
+          detailsPanel.style.display = "block";
+          setTimeout(function() { detailsPanel.style.display = "none"; }, 15000);
+        }
+        
+        /********** Clear Requests Button **********/
+        var clearBtn = document.createElement("button");
+        clearBtn.id = "clearBtn";
+        clearBtn.innerHTML = "Clear Requests";
+        document.body.appendChild(clearBtn);
+        clearBtn.addEventListener("click", function() {
+          routeLayer.removeAll();
+          var resultsBox = document.getElementById("resultsBox");
+          if (resultsBox) { resultsBox.innerHTML = ""; }
+          routingMode = false;
+          routeFirstPoint = null;
+          view.container.style.cursor = "default";
+        });
+        
+        /********** Advanced Filter Functionality **********/
+        // Function to filter graphics in both the symbolLayer and trailsLayer.
+        function advancedFilter(filterText) {
+          // Filter markers in symbolLayer.
+          symbolLayer.graphics.forEach(function(graphic) {
+            var name = (graphic.attributes.name || "").toLowerCase();
+            var desc = (graphic.attributes.description || "").toLowerCase();
+            var funFacts = (graphic.attributes.funFacts || "").toLowerCase();
+            graphic.visible = name.includes(filterText) || desc.includes(filterText) || funFacts.includes(filterText);
+          });
+          // Filter trail graphics in trailsLayer.
+          trailsLayer.graphics.forEach(function(graphic) {
+            var name = (graphic.attributes.name || "").toLowerCase();
+            var desc = (graphic.attributes.description || "").toLowerCase();
+            graphic.visible = name.includes(filterText) || desc.includes(filterText);
+          });
+        }
+        
+        // Set up event listeners for the filter buttons.
+        document.getElementById("filterBtn").addEventListener("click", function(){
+          var filterText = document.getElementById("filterInput").value.trim().toLowerCase();
+          advancedFilter(filterText);
+        });
+        
+        document.getElementById("clearFilterBtn").addEventListener("click", function(){
+          document.getElementById("filterInput").value = "";
+          advancedFilter("");
+        });
+        
+        /********** Expand Widgets Watchers **********/
+        attractionsExpand.watch("expanded", function(val) {
+          if (val === true) {
+            otherAttractionsExpand.expanded = false;
+            trailsExpand.expanded = false;
+          }
+        });
+        otherAttractionsExpand.watch("expanded", function(val) {
+          if (val === true) {
+            attractionsExpand.expanded = false;
+            trailsExpand.expanded = false;
+          }
+        });
+        trailsExpand.watch("expanded", function(val) {
+          if (val === true) {
+            attractionsExpand.expanded = false;
+            otherAttractionsExpand.expanded = false;
+          }
+        });
+        
+      });
+    </script>
+  </head>
+  <body>
+    <h1>Kauai, Hawaii</h1>
+    <div id="viewDiv"></div>
+  </body>
+</html>
